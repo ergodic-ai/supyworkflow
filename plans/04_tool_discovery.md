@@ -4,52 +4,45 @@
 
 Better validation at dry-run time, richer tool information for the generator, and elimination of false-positive warnings.
 
-## Current State
+## What Changed Since Initial Plan
 
-- `build_tool_callables()` fetches tool metadata from `/api/v1/tools` and builds callable functions
-- `dry_run()` does AST analysis but flags builtins (len, min, max) and Pydantic types (BaseModel) as unresolved references
-- The generator knows tool names but not their full parameter schemas
-- No validation that a tool action exists before execution
+### bodyDefaults fix (done)
+
+The tool metadata includes a `bodyDefaults` field (e.g., `{"action": "insert_text"}` for Google Docs). The tool proxy now merges these into the request body automatically. This fixed all `docs_insert_text` failures across stress tests.
+
+### Import blocklist instead of allowlist (done)
+
+Switched from an allowlist of safe imports to a blocklist of dangerous ones. This fixed the `datetime` → `time` transitive dependency issue and similar problems where allowed modules import internal modules that weren't in the allowlist.
+
+### Flat tool naming (done)
+
+Tool proxy was rewritten from the `ToolProxy.__getattr__` pattern (e.g., `gmail.send_email()`) to flat callables (e.g., `gmail_send_message()`), matching the actual supyagent API naming. This eliminated a whole class of naming mismatches.
+
+### HTTP method support (done)
+
+Added PUT method support to the tool proxy. Google Sheets `update_values` uses PUT, which was missing.
 
 ## Remaining Work
 
-### 1. Fix dry-run false positives
+### Fix dry-run false positives
 
-The dry-run warns about variables like `len`, `min`, `str`, `list`, `BaseModel` because they're not in any cell's `writes` set. Fix by maintaining a set of "known globals" that includes:
-- All SAFE_BUILTINS keys
-- All BLOCKED_IMPORTS (to distinguish "blocked" from "unknown")
-- All injected tool function names
-- `llm`, `BaseModel`, `Field`
+The dry-run still warns about builtins (`len`, `min`, `str`, `list`) and injected globals (`BaseModel`, `Field`) as unresolved references. Fix by maintaining a `known_globals` set in the dry-run that includes all SAFE_BUILTINS keys + tool names + `llm`, `BaseModel`, `Field`.
 
-Then `unresolved = cell.depends_on - all_writes - known_globals`.
+### Parameter schema validation in dry-run
 
-### 2. Parameter schema validation in dry-run
-
-At dry-run time, we have the tool metadata (including parameter schemas). We can AST-parse the tool calls and check:
+At dry-run time, we have the tool metadata. AST-parse tool calls and check:
 - Does the tool function exist?
 - Are required parameters provided?
-- Are parameter names spelled correctly?
+- Are parameter names correct?
 
-This catches errors before execution without making any API calls.
+### Tool action caching
 
-### 3. Richer tool info for generator
+Currently every `SupyWorkflow()` instantiation fetches tool metadata from the API. Add a TTL cache (5 minutes) to avoid redundant HTTP calls.
 
-Currently the generator gets:
-```python
-tools=["gmail", "slack"]
-tool_actions={"gmail": ["list_messages", "send_email"]}
-```
+### Smarter tool result formatting
 
-Could be enhanced to include parameter schemas:
-```python
-tool_actions={
-    "gmail_list_messages": {"q": "string (Gmail search query)", "maxResults": "integer"},
-    "gmail_send_message": {"to": "string (required)", "subject": "string", "body": "string"},
-}
-```
-
-This helps the LLM generate correct tool calls on the first try, reducing healing.
-
-### 4. Tool action caching
-
-Currently every `SupyWorkflow()` instantiation fetches tool metadata from the API. Add a TTL cache (e.g., 5 minutes) to avoid redundant HTTP calls across multiple runs.
+For the agentic generator, raw JSON tool results waste tokens. Post-process common responses:
+- Slack channels → compact table of name/ID/memberCount
+- Calendar events → time + title list
+- Search results → title + snippet only
+- Large arrays → first N items + count

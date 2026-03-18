@@ -8,16 +8,17 @@ A "workflow-as-code" runtime that replaces Cardamon's rigid JSON workflow engine
 
 ```
 supyworkflow/
-├── parser.py        — Cell splitting (# ---) + AST dependency graph
-├── tool_proxy.py    — Routes flat tool calls (gmail_list_messages) to cardamon REST API
-├── llm_builtin.py   — llm() function with Pydantic structured output via LiteLLM
-├── namespace.py     — Sandboxed exec() namespace (blocked imports, injected tools)
-├── snapshot.py      — Capture/restore namespace state for cell resumability
-├── trace.py         — Structured execution logging (tool calls, llm calls, timing)
-├── runtime.py       — Core engine: run(), dry_run(), resume, self-healing
-├── healer.py        — LLM-powered cell repair on failure
-├── generator.py     — Generate workflow scripts from natural language prompts
-└── cli.py           — CLI entry point (supyworkflow run/parse)
+├── parser.py           — Cell splitting (# ---) + AST dependency graph
+├── tool_proxy.py       — Routes flat tool calls to cardamon REST API with metadata
+├── llm_builtin.py      — llm() function with Pydantic structured output via LiteLLM
+├── namespace.py        — Sandboxed exec() namespace (blocklisted imports, injected tools)
+├── snapshot.py         — Capture/restore namespace state for cell resumability
+├── trace.py            — Structured execution logging (tool calls, llm calls, timing)
+├── runtime.py          — Core engine: run(), dry_run(), resume, self-healing
+├── healer.py           — LLM-powered cell repair on failure
+├── generator.py        — Single-shot workflow generation from prompts
+├── agent_generator.py  — Agentic generator with tool exploration loop (branch: agentic-generator)
+└── cli.py              — CLI entry point (supyworkflow run/parse)
 ```
 
 ## Integration Point
@@ -32,18 +33,27 @@ supyworkflow/
 | Capability | Status | Details |
 |-----------|--------|---------|
 | Cell parser + AST deps | Done | 11 unit tests |
-| Tool proxy (cardamon API) | Done | Flat callable routing with metadata |
-| LLM builtin (Pydantic) | Done | Structured output via schema-in-prompt |
-| Sandboxed namespace | Done | Blocked imports, injected tools + builtins |
+| Tool proxy (cardamon API) | Done | Flat callable routing with metadata + bodyDefaults |
+| LLM builtin (Pydantic) | Done | Structured output via schema-in-prompt, no max_tokens |
+| Sandboxed namespace | Done | Blocklist imports (not allowlist), injected tools + builtins |
 | Runtime execution | Done | Sequential cells, snapshots, resume from cell |
 | Self-healing | Done | LLM patches failed cells, up to 3 retries |
 | Execution trace | Done | Structured event log |
-| Workflow generation | Done | Natural language → Python script |
+| Single-shot generation | Done | Natural language → Python script |
+| Agentic generation | Done | Agent explores tools before writing script (branch) |
 | Iterative refinement | Done | Refine script from dry-run analysis or errors |
 | CLI | Done | run, parse commands |
 | Unit tests | Done | 36 passing (parser, runtime, healer, generator) |
 | E2E tests | Done | 6 tests with real Gemini API, all passing |
-| Live examples | Done | 5 examples (email, calendar, research, competitor, standup) |
+| Live examples | Done | 5 hand-written, 5 single-shot generated, all passing |
+| Stress tests (single-shot) | Done | 10/10 passing across 8+ services, 60/60 cells |
+| Stress tests (agentic) | Done | 9/10 passing, 1 partial (Pydantic nested model edge case) |
+
+## Repository
+
+- **GitHub**: https://github.com/ergodic-ai/supyworkflow
+- **Main branch**: core runtime + single-shot generator + all tests
+- **agentic-generator branch**: agentic generator with tool exploration
 
 ## Remaining Work
 
@@ -55,3 +65,4 @@ See individual plan files for details:
 4. [Tool discovery improvements](04_tool_discovery.md) — Better dry-run validation, action schemas
 5. [Observability](05_observability.md) — Real-time progress, trace → UI integration
 6. [Testing hardening](06_testing.md) — Edge cases, error scenarios, live tool tests
+7. [Agentic generator](07_agentic_generator.md) — Findings, improvements, merge plan
