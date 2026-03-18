@@ -83,8 +83,8 @@ Here are all the tools available in this workspace:
 
 ## Your Agent Tools
 
-1. **get_tool_schema(tool_name)** — Get the full parameter schema for a specific tool. \
-Call this to learn exact parameter names, types, and which are required.
+1. **get_tool_schemas(tool_names)** — Get the full parameter schemas for one or more tools in a single call. \
+Pass a list of tool names to batch lookups. Returns parameter names, types, and required fields.
 
 2. **execute_tool(tool_name, arguments)** — Run a tool and see the result. Use this to \
 explore: list Slack channels to find the right ID, check calendar events, search the web, etc. \
@@ -95,9 +95,12 @@ Only call this when you have all the information needed.
 
 ## Exploration Strategy
 
-- You already know what tools exist (listed above). Skip straight to get_tool_schema() \
-for the tools you plan to use.
+- You already know what tools exist (listed above). Skip straight to get_tool_schemas() \
+for all the tools you plan to use — batch them in a single call.
 - Use execute_tool() to discover IDs, test APIs, and gather context.
+- Do NOT call the same tool with the same arguments twice. If a response is truncated, \
+you already have enough data — work with what you have.
+- Be efficient: gather what you need, then write_script(). Aim for under 10 tool calls.
 - Only write_script() when you're confident the script will work.
 
 ## Script Format
@@ -125,7 +128,7 @@ summary = llm("Summarize these emails", data=emails, format=Summary)
 slack_send_message(channel="C069536PYEQ", text="\\n".join(summary.highlights))
 ```
 
-IMPORTANT: Use exact tool names and parameter names from get_tool_schema(). \
+IMPORTANT: Use exact tool names and parameter names from get_tool_schemas(). \
 Use real IDs discovered via execute_tool(), not placeholders.
 """
 
@@ -135,17 +138,18 @@ AGENT_TOOLS = [
     {
         "type": "function",
         "function": {
-            "name": "get_tool_schema",
-            "description": "Get the full parameter schema for a specific tool. Use this to understand exact parameter names, types, and which are required.",
+            "name": "get_tool_schemas",
+            "description": "Get the full parameter schemas for one or more tools. Returns a dict mapping tool name to its schema (parameters, types, required fields). Pass multiple names to batch lookups in a single call.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "tool_name": {
-                        "type": "string",
-                        "description": "The tool name, e.g. 'gmail_list_messages'",
+                    "tool_names": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "List of tool names, e.g. ['gmail_list_messages', 'slack_send_message']",
                     },
                 },
-                "required": ["tool_name"],
+                "required": ["tool_names"],
             },
         },
     },
@@ -153,7 +157,7 @@ AGENT_TOOLS = [
         "type": "function",
         "function": {
             "name": "execute_tool",
-            "description": "Execute a tool and return the result. Use this to explore: list Slack channels, check calendar events, search the web, etc. Results are truncated to 4000 chars.",
+            "description": "Execute a tool and return the result. Use this to explore: list Slack channels, check calendar events, search the web, etc. Results are returned as JSON, truncated if large. Use offset/max_chars to paginate through large responses.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -164,6 +168,14 @@ AGENT_TOOLS = [
                     "arguments": {
                         "type": "object",
                         "description": "Arguments to pass to the tool as key-value pairs",
+                    },
+                    "max_chars": {
+                        "type": "integer",
+                        "description": "Maximum characters to return (default 8000). Use a smaller value if you only need a quick peek.",
+                    },
+                    "offset": {
+                        "type": "integer",
+                        "description": "Character offset to start from (default 0). Use with max_chars to paginate through large responses.",
                     },
                 },
                 "required": ["tool_name"],
@@ -368,14 +380,16 @@ def _handle_tool_call(
     call_record = {"tool": fn_name, "args": fn_args, "timestamp": time.time()}
 
     try:
-        if fn_name == "get_tool_schema":
-            tool_name = fn_args.get("tool_name", "")
-            result = _get_tool_schema(tool_name, tool_index)
+        if fn_name == "get_tool_schemas":
+            tool_names = fn_args.get("tool_names", [])
+            result = _get_tool_schemas(tool_names, tool_index)
 
         elif fn_name == "execute_tool":
             tool_name = fn_args.get("tool_name", "")
             arguments = fn_args.get("arguments", {})
-            result = _execute_tool(tool_name, arguments, tool_callables)
+            max_chars = fn_args.get("max_chars", 8000)
+            offset = fn_args.get("offset", 0)
+            result = _execute_tool(tool_name, arguments, tool_callables, max_chars, offset)
 
         elif fn_name == "write_script":
             script = fn_args.get("script", "")
@@ -417,42 +431,73 @@ def _list_tools(tool_index: dict[str, dict]) -> str:
     return "\n".join(lines)
 
 
-def _get_tool_schema(tool_name: str, tool_index: dict[str, dict]) -> str:
-    """Return full parameter schema for one tool."""
-    if tool_name not in tool_index:
-        return f"Tool '{tool_name}' not found. Use list_tools() to see available tools."
+def _get_tool_schemas(tool_names: list[str], tool_index: dict[str, dict]) -> str:
+    """Return full parameter schemas for one or more tools."""
+    schemas = {}
+    not_found = []
 
-    tool = tool_index[tool_name]
-    func = tool["function"]
-    meta = tool.get("metadata", {})
+    for tool_name in tool_names:
+        if tool_name not in tool_index:
+            not_found.append(tool_name)
+            continue
 
-    info = {
-        "name": func["name"],
-        "description": func.get("description", ""),
-        "parameters": func.get("parameters", {}),
-        "method": meta.get("method", ""),
-        "path": meta.get("path", ""),
-    }
-    return json.dumps(info, indent=2)
+        tool = tool_index[tool_name]
+        func = tool["function"]
+        meta = tool.get("metadata", {})
+
+        schemas[tool_name] = {
+            "description": func.get("description", ""),
+            "parameters": func.get("parameters", {}),
+            "method": meta.get("method", ""),
+        }
+
+    result = json.dumps(schemas, indent=2)
+    if not_found:
+        result += f"\n\nNot found: {not_found}"
+    return result
 
 
 def _execute_tool(
     tool_name: str,
     arguments: dict,
     tool_callables: dict[str, callable],
+    max_chars: int = 8000,
+    offset: int = 0,
 ) -> str:
-    """Execute a tool and return truncated result."""
+    """Execute a tool and return the result with offset/truncation support."""
     if tool_name not in tool_callables:
         return f"Tool '{tool_name}' not found or not callable."
 
     result = tool_callables[tool_name](**arguments)
-    serialized = json.dumps(result, default=str, indent=2)
+    full = json.dumps(result, default=str, indent=2)
+    total_len = len(full)
 
-    # Truncate large results
-    if len(serialized) > 4000:
-        serialized = serialized[:4000] + "\n... (truncated)"
+    # Apply offset
+    if offset > 0:
+        full = full[offset:]
 
-    return serialized
+    # Truncate if needed
+    if len(full) > max_chars:
+        # Try to cut at a clean JSON boundary
+        cut = full[:max_chars].rfind("\n    },")
+        if cut == -1:
+            cut = full[:max_chars].rfind("\n  },")
+        if cut == -1:
+            cut = full[:max_chars].rfind("},")
+        if cut > max_chars // 2:
+            truncated = full[: cut + 2] + "\n  ..."
+        else:
+            truncated = full[:max_chars] + "\n..."
+
+        remaining = total_len - offset - max_chars
+        truncated += f"\n\n(Showing chars {offset}-{offset + max_chars} of {total_len}. "
+        if remaining > 0:
+            truncated += f"{remaining} chars remaining — use offset={offset + max_chars} to continue)"
+        else:
+            truncated += "end of response)"
+        return truncated
+
+    return full
 
 
 def _strip_fences(text: str) -> str:
