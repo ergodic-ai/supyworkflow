@@ -68,34 +68,37 @@ class GenerateSession:
         }
 
 
-SYSTEM_PROMPT = """\
+SYSTEM_PROMPT_TEMPLATE = """\
 You are a workflow script generator. Your job is to write a Python workflow script \
 that automates a task described by the user.
 
 Before writing the script, you should EXPLORE to gather the information you need. \
 You have tools to discover what's available and test things out.
 
-## Your Tools
+## Available Tools
 
-1. **list_tools()** — See all available tools with descriptions. Call this first to \
-understand what's available. Returns tool names and one-line descriptions (lightweight).
+Here are all the tools available in this workspace:
 
-2. **get_tool_schema(tool_name)** — Get the full parameter schema for a specific tool. \
-Call this when you need to know exact parameter names, types, and requirements.
+{tool_listing}
 
-3. **execute_tool(tool_name, arguments)** — Run a tool and see the result. Use this to \
+## Your Agent Tools
+
+1. **get_tool_schema(tool_name)** — Get the full parameter schema for a specific tool. \
+Call this to learn exact parameter names, types, and which are required.
+
+2. **execute_tool(tool_name, arguments)** — Run a tool and see the result. Use this to \
 explore: list Slack channels to find the right ID, check calendar events, search the web, etc. \
 The `arguments` parameter is a JSON object with the tool's parameters.
 
-4. **write_script(script)** — Submit the final workflow script. This terminates the session. \
+3. **write_script(script)** — Submit the final workflow script. This terminates the session. \
 Only call this when you have all the information needed.
 
 ## Exploration Strategy
 
-- Start with list_tools() to see what's available
-- Use get_tool_schema() to understand parameter names for tools you'll use
-- Use execute_tool() to discover IDs, test APIs, and gather context
-- Only write_script() when you're confident the script will work
+- You already know what tools exist (listed above). Skip straight to get_tool_schema() \
+for the tools you plan to use.
+- Use execute_tool() to discover IDs, test APIs, and gather context.
+- Only write_script() when you're confident the script will work.
 
 ## Script Format
 
@@ -129,14 +132,6 @@ Use real IDs discovered via execute_tool(), not placeholders.
 
 # Tool definitions for the LLM (OpenAI function calling format)
 AGENT_TOOLS = [
-    {
-        "type": "function",
-        "function": {
-            "name": "list_tools",
-            "description": "List all available tools with their descriptions. Call this first to see what's available. Returns lightweight info (no parameter schemas).",
-            "parameters": {"type": "object", "properties": {}},
-        },
-    },
     {
         "type": "function",
         "function": {
@@ -228,15 +223,19 @@ def generate_workflow_agentic(
     )
     start = time.monotonic()
 
-    # Fetch tool metadata (for list_tools, get_tool_schema)
+    # Fetch tool metadata
     tools_metadata = _fetch_tools_metadata(api_key, base_url, 30)
     tool_index = {t["function"]["name"]: t for t in tools_metadata}
 
     # Build callables (for execute_tool)
     tool_callables = build_tool_callables(api_key=api_key, base_url=base_url, tools_metadata=tools_metadata)
 
-    # Build initial messages
-    messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+    # Build tool listing for the system prompt
+    tool_listing = _list_tools(tool_index)
+
+    # Build initial messages with tools seeded in
+    system_prompt = SYSTEM_PROMPT_TEMPLATE.format(tool_listing=tool_listing)
+    messages = [{"role": "system", "content": system_prompt}]
 
     user_content = f"## Task\n{prompt}"
     if context:
@@ -369,10 +368,7 @@ def _handle_tool_call(
     call_record = {"tool": fn_name, "args": fn_args, "timestamp": time.time()}
 
     try:
-        if fn_name == "list_tools":
-            result = _list_tools(tool_index)
-
-        elif fn_name == "get_tool_schema":
+        if fn_name == "get_tool_schema":
             tool_name = fn_args.get("tool_name", "")
             result = _get_tool_schema(tool_name, tool_index)
 
