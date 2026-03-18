@@ -1,5 +1,6 @@
 """supyworkflow — Workflow-as-code runtime for LLM-generated Python workflows."""
 
+from supyworkflow.agent_generator import GenerateSession, generate_workflow_agentic
 from supyworkflow.generator import generate_workflow, refine_workflow
 from supyworkflow.healer import heal_cell
 from supyworkflow.llm_builtin import llm
