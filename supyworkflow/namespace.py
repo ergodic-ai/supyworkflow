@@ -214,11 +214,11 @@ def build_namespace(
     # Inject tool callables (each tool_name becomes a function in the namespace)
     # When tools is explicitly set to [] (e.g. in tests), skip API discovery
     if tools is None:
-        tool_callables = build_tool_callables(api_key=api_key, base_url=base_url)
+        tool_callables = build_tool_callables(api_key=api_key, base_url=base_url, user_id=user_id)
         namespace.update(tool_callables)
     elif tools:
         # Caller provided specific tool names — still fetch metadata for routing
-        tool_callables = build_tool_callables(api_key=api_key, base_url=base_url)
+        tool_callables = build_tool_callables(api_key=api_key, base_url=base_url, user_id=user_id)
         namespace.update({k: v for k, v in tool_callables.items() if k in set(tools)})
     # else: tools == [] means no tools, skip entirely
 

@@ -30,11 +30,16 @@ def build_tool_callables(
     base_url: str = DEFAULT_BASE_URL,
     timeout: float = DEFAULT_TIMEOUT,
     tools_metadata: list[dict] | None = None,
+    user_id: str | None = None,
 ) -> dict[str, callable]:
     """Build a dict of callable functions from tool metadata.
 
     Each tool like gmail_list_messages becomes a callable that routes
     to the correct REST endpoint with the right HTTP method.
+
+    Args:
+        user_id: When set, passed as X-Account-Id header to scope tool
+                 execution to a specific user's connected integrations.
 
     Returns:
         Dict mapping tool_name -> callable(**kwargs) -> result
@@ -42,12 +47,16 @@ def build_tool_callables(
     if tools_metadata is None:
         tools_metadata = _fetch_tools_metadata(api_key, base_url, timeout)
 
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+    }
+    if user_id:
+        headers["X-Account-Id"] = user_id
+
     client = httpx.Client(
         timeout=timeout,
-        headers={
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
-        },
+        headers=headers,
     )
 
     callables: dict[str, callable] = {}
