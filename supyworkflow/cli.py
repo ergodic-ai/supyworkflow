@@ -79,6 +79,7 @@ def run(
 @click.option("--base-url", envvar="SUPYAGENT_BASE_URL", default="https://app.supyagent.com")
 @click.option("--context", default=None, help="Additional context for the generator")
 @click.option("--max-turns", default=20, help="Maximum agent exploration turns")
+@click.option("--progress-file", default=None, help="File to write progress updates to (for polling)")
 @click.option("--output-format", type=click.Choice(["text", "json"]), default="text")
 @click.option("--verbose", "-v", is_flag=True, help="Verbose logging")
 def generate(
@@ -87,6 +88,7 @@ def generate(
     base_url: str,
     context: str | None,
     max_turns: int,
+    progress_file: str | None,
     output_format: str,
     verbose: bool,
 ) -> None:
@@ -104,6 +106,7 @@ def generate(
         base_url=base_url,
         context=context,
         max_turns=max_turns,
+        progress_file=progress_file,
     )
 
     if output_format == "json":

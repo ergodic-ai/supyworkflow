@@ -213,6 +213,7 @@ def generate_workflow_agentic(
     model: str | None = None,
     max_turns: int = MAX_TURNS,
     context: str | None = None,
+    progress_file: str | None = None,
 ) -> GenerateSession:
     """Generate a workflow script using an agentic exploration loop.
 
@@ -326,8 +327,12 @@ def generate_workflow_agentic(
                 "content": result,
             })
 
+            # Write progress
+            _write_progress(progress_file, session, "exploring")
+
             # If write_script was called, we're done
             if session.script is not None:
+                _write_progress(progress_file, session, "complete")
                 break
 
         if session.script is not None:
@@ -528,3 +533,59 @@ def _strip_fences(text: str) -> str:
     if match:
         return match.group(1).strip()
     return text
+
+
+def _write_progress(
+    progress_file: str | None,
+    session: GenerateSession,
+    phase: str,
+) -> None:
+    """Write current generation progress to a file for polling."""
+    if not progress_file:
+        return
+
+    # Build a compact summary of tool calls
+    tool_calls_summary = []
+    for call in session.tool_calls_made:
+        tool = call.get("tool", "")
+        args = call.get("args", {})
+        status = call.get("status", "ok")
+
+        if tool == "get_tool_schemas":
+            names = args.get("tool_names", [])
+            summary = ", ".join(names[:5])
+            if len(names) > 5:
+                summary += f" (+{len(names) - 5} more)"
+        elif tool == "execute_tool":
+            tool_name = args.get("tool_name", "")
+            summary = tool_name
+        elif tool == "write_script":
+            script_len = len(args.get("script", ""))
+            summary = f"{script_len} chars"
+        else:
+            summary = json.dumps(args)[:60]
+
+        tool_calls_summary.append({
+            "tool": tool,
+            "summary": summary,
+            "status": status,
+        })
+
+    progress = {
+        "phase": phase,
+        "turns": session.turns,
+        "total_tokens": session.total_tokens,
+        "tool_calls": tool_calls_summary,
+    }
+
+    if phase == "complete" and session.script:
+        progress["script"] = session.script
+        progress["session_id"] = session.session_id
+        progress["duration_ms"] = session.duration_ms
+        progress["tool_calls_made"] = session.tool_calls_made
+
+    try:
+        with open(progress_file, "w") as f:
+            json.dump(progress, f, default=str)
+    except Exception:
+        pass  # Non-critical — don't crash generation over progress writes
