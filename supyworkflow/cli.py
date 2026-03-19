@@ -17,11 +17,12 @@ def app() -> None:
 @app.command()
 @click.argument("script", type=click.Path(exists=True))
 @click.option("--api-key", envvar="SUPYAGENT_API_KEY", required=True, help="Cardamon API key")
-@click.option("--user-id", envvar="SUPYAGENT_USER_ID", required=True, help="User ID")
+@click.option("--user-id", envvar="SUPYAGENT_USER_ID", default="default", help="User ID")
 @click.option("--base-url", envvar="SUPYAGENT_BASE_URL", default="https://app.supyagent.com")
 @click.option("--input", "-i", "inputs", multiple=True, help="Input as key=value pairs")
 @click.option("--from-cell", default=0, help="Cell index to start from")
 @click.option("--dry-run", is_flag=True, help="Analyze without executing")
+@click.option("--output-format", type=click.Choice(["text", "json"]), default="text")
 @click.option("--verbose", "-v", is_flag=True, help="Verbose logging")
 def run(
     script: str,
@@ -31,6 +32,7 @@ def run(
     inputs: tuple[str, ...],
     from_cell: int,
     dry_run: bool,
+    output_format: str,
     verbose: bool,
 ) -> None:
     """Execute a workflow script."""
@@ -48,7 +50,6 @@ def run(
     input_dict = {}
     for item in inputs:
         key, _, value = item.partition("=")
-        # Try to parse as JSON, fall back to string
         try:
             input_dict[key] = json.loads(value)
         except json.JSONDecodeError:
@@ -63,28 +64,72 @@ def run(
 
     result = runtime.run(source, inputs=input_dict, from_cell=from_cell)
 
-    # Print cell results
-    for cell in result.cells:
-        status_icon = {"completed": "ok", "failed": "FAIL", "skipped": "skip"}.get(
-            cell.status, "?"
-        )
-        label = cell.label or f"cell {cell.index}"
-        click.echo(f"  [{status_icon}] {label} ({cell.duration_ms:.0f}ms)")
-        if cell.error:
-            click.echo(f"       error: {cell.error}")
-
-    # Print summary
-    if result.trace:
-        summary = result.trace.summary()
-        click.echo(
-            f"\n  {summary['cells']} cells, "
-            f"{summary['tool_calls']} tool calls, "
-            f"{summary['llm_calls']} llm calls, "
-            f"{summary['total_duration_ms']:.0f}ms total"
-        )
+    if output_format == "json":
+        _output_json(result)
+    else:
+        _output_text(result)
 
     if result.status == "failed":
         sys.exit(1)
+
+
+@app.command()
+@click.option("--prompt", required=True, help="What the workflow should do")
+@click.option("--api-key", envvar="SUPYAGENT_API_KEY", required=True, help="Cardamon API key")
+@click.option("--base-url", envvar="SUPYAGENT_BASE_URL", default="https://app.supyagent.com")
+@click.option("--context", default=None, help="Additional context for the generator")
+@click.option("--max-turns", default=20, help="Maximum agent exploration turns")
+@click.option("--output-format", type=click.Choice(["text", "json"]), default="text")
+@click.option("--verbose", "-v", is_flag=True, help="Verbose logging")
+def generate(
+    prompt: str,
+    api_key: str,
+    base_url: str,
+    context: str | None,
+    max_turns: int,
+    output_format: str,
+    verbose: bool,
+) -> None:
+    """Generate a workflow script from a natural language prompt (agentic)."""
+    import logging
+
+    from supyworkflow.agent_generator import generate_workflow_agentic
+
+    if verbose:
+        logging.basicConfig(level=logging.INFO, format="%(message)s")
+
+    session = generate_workflow_agentic(
+        prompt=prompt,
+        api_key=api_key,
+        base_url=base_url,
+        context=context,
+        max_turns=max_turns,
+    )
+
+    if output_format == "json":
+        output = {
+            "script": session.script,
+            "session_id": session.session_id,
+            "turns": session.turns,
+            "tool_calls_made": session.tool_calls_made,
+            "total_tokens": session.total_tokens,
+            "duration_ms": session.duration_ms,
+        }
+        click.echo(json.dumps(output, default=str))
+    else:
+        if session.script:
+            click.echo(session.script)
+        else:
+            click.echo("No script generated.", err=True)
+            sys.exit(1)
+
+        click.echo(
+            f"\n# Generated in {session.turns} turns, "
+            f"{len(session.tool_calls_made)} tool calls, "
+            f"{session.total_tokens} tokens, "
+            f"{session.duration_ms:.0f}ms",
+            err=True,
+        )
 
 
 @app.command()
@@ -107,3 +152,57 @@ def parse(script: str) -> None:
         if deps:
             click.echo(f"  depends on cells: {sorted(deps)}")
         click.echo()
+
+
+def _output_json(result) -> None:
+    """Output run result as JSON (for subprocess consumption)."""
+    output = {
+        "status": result.status,
+        "run_id": result.trace.run_id if result.trace else None,
+        "outputs": {
+            k: v for k, v in result.outputs.items()
+            if not callable(v) and not isinstance(v, type)
+        },
+        "cells": [
+            {
+                "index": c.index,
+                "label": c.label,
+                "status": c.status,
+                "duration_ms": round(c.duration_ms, 1),
+            }
+            for c in result.cells
+        ],
+        "healed_cells": {
+            str(idx): {
+                "healed": h.healed,
+                "attempts": h.attempts,
+                "patched_source": h.patched_source if h.healed else None,
+            }
+            for idx, h in result.healed_cells.items()
+        } if result.healed_cells else {},
+        "trace": result.trace.to_dict() if result.trace else None,
+        "error": str(result.error) if result.error else None,
+    }
+    click.echo(json.dumps(output, default=str))
+
+
+def _output_text(result) -> None:
+    """Output run result as human-readable text."""
+    for cell in result.cells:
+        status_icon = {"completed": "ok", "failed": "FAIL", "skipped": "skip"}.get(
+            cell.status, "?"
+        )
+        label = cell.label or f"cell {cell.index}"
+        click.echo(f"  [{status_icon}] {label} ({cell.duration_ms:.0f}ms)")
+        if cell.error:
+            click.echo(f"       error: {cell.error}")
+
+    if result.trace:
+        summary = result.trace.summary()
+        click.echo(
+            f"\n  {summary['cells']} cells, "
+            f"{summary['tool_calls']} tool calls, "
+            f"{summary['llm_calls']} llm calls, "
+            f"${summary['total_cost']:.4f}, "
+            f"{summary['total_duration_ms']:.0f}ms total"
+        )
