@@ -134,7 +134,8 @@ def generate(
 
 @app.command()
 @click.argument("script", type=click.Path(exists=True))
-def parse(script: str) -> None:
+@click.option("--output-format", type=click.Choice(["text", "json"]), default="text")
+def parse(script: str, output_format: str) -> None:
     """Parse a workflow script and show cell structure."""
     from supyworkflow.parser import build_dependency_graph, parse_cells
 
@@ -144,14 +145,40 @@ def parse(script: str) -> None:
     cells = parse_cells(source)
     graph = build_dependency_graph(cells)
 
-    for cell in cells:
-        deps = graph.get(cell.index, set())
-        click.echo(f"Cell {cell.index}: {cell.label or '(unlabeled)'}")
-        click.echo(f"  reads:  {sorted(cell.reads)}")
-        click.echo(f"  writes: {sorted(cell.writes)}")
-        if deps:
-            click.echo(f"  depends on cells: {sorted(deps)}")
-        click.echo()
+    if output_format == "json":
+        # Detect tool calls and llm calls per cell
+        import re
+        tool_pattern = re.compile(r'\b(\w+_\w+)\s*\(')
+        llm_pattern = re.compile(r'\bllm\s*\(')
+
+        result = {
+            "cells": [
+                {
+                    "index": c.index,
+                    "label": c.label or f"cell_{c.index}",
+                    "reads": sorted(c.reads),
+                    "writes": sorted(c.writes),
+                    "depends_on": sorted(graph.get(c.index, set())),
+                    "tool_calls": [m for m in tool_pattern.findall(c.source) if '_' in m and m != '__build_class__'],
+                    "has_llm_call": bool(llm_pattern.search(c.source)),
+                    "source_lines": len(c.source.strip().splitlines()),
+                }
+                for c in cells
+            ],
+            "dependency_graph": {
+                str(k): sorted(v) for k, v in graph.items()
+            },
+        }
+        click.echo(json.dumps(result, indent=2))
+    else:
+        for cell in cells:
+            deps = graph.get(cell.index, set())
+            click.echo(f"Cell {cell.index}: {cell.label or '(unlabeled)'}")
+            click.echo(f"  reads:  {sorted(cell.reads)}")
+            click.echo(f"  writes: {sorted(cell.writes)}")
+            if deps:
+                click.echo(f"  depends on cells: {sorted(deps)}")
+            click.echo()
 
 
 def _output_json(result) -> None:
