@@ -97,16 +97,31 @@ def llm(
 
     duration_ms = (time.monotonic() - start) * 1000
     usage = response.usage
+    prompt_tokens = usage.prompt_tokens if usage else 0
+    completion_tokens = usage.completion_tokens if usage else 0
 
     logger.info(
         "llm_call_end",
         extra={
             "model": model,
             "duration_ms": duration_ms,
-            "prompt_tokens": usage.prompt_tokens if usage else 0,
-            "completion_tokens": usage.completion_tokens if usage else 0,
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": completion_tokens,
         },
     )
+
+    # Write to trace if in a traced execution
+    from supyworkflow._trace_ctx import get_cell_index, get_trace
+    trace = get_trace()
+    if trace:
+        trace.llm_call(
+            model=model,
+            duration_ms=duration_ms,
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            cell_index=get_cell_index(),
+            has_format=use_structured,
+        )
 
     raw = response.choices[0].message.content
 

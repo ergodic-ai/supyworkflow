@@ -93,8 +93,11 @@ def _make_tool_callable(
     path_params = re.findall(r'\{(\w+)\}', path_template)
 
     def call(**kwargs: Any) -> Any:
+        from supyworkflow._trace_ctx import get_cell_index, get_trace
+
         start = time.monotonic()
-        logger.info("tool_call_start", extra={"action": name, "input_keys": list(kwargs.keys())})
+        input_keys = list(kwargs.keys())
+        logger.info("tool_call_start", extra={"action": name, "input_keys": input_keys})
 
         # Separate path params from body/query params
         path_values = {}
@@ -135,11 +138,26 @@ def _make_tool_callable(
                 "tool_call_error",
                 extra={"action": name, "status_code": e.response.status_code, "duration_ms": duration_ms},
             )
+            trace = get_trace()
+            if trace:
+                trace.tool_call(
+                    action=name, duration_ms=duration_ms, ok=False,
+                    cell_index=get_cell_index(),
+                    error=str(e.response.status_code),
+                    input_keys=input_keys,
+                )
             detail = e.response.text[:500] if e.response.text else str(e)
             raise ToolCallError(action=name, status_code=e.response.status_code, detail=detail) from e
 
         duration_ms = (time.monotonic() - start) * 1000
         logger.info("tool_call_end", extra={"action": name, "duration_ms": duration_ms})
+
+        trace = get_trace()
+        if trace:
+            trace.tool_call(
+                action=name, duration_ms=duration_ms, ok=True,
+                cell_index=get_cell_index(), input_keys=input_keys,
+            )
 
         # Unwrap cardamon's response envelope
         if isinstance(data, dict):

@@ -6,13 +6,14 @@ import logging
 import time
 import uuid
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Callable
 
+from supyworkflow._trace_ctx import set_trace
 from supyworkflow.healer import HealResult, heal_cell
 from supyworkflow.namespace import build_namespace, discover_tools
 from supyworkflow.parser import Cell, build_dependency_graph, parse_cells
 from supyworkflow.snapshot import capture_snapshot, restore_snapshot
-from supyworkflow.trace import ExecutionTrace
+from supyworkflow.trace import ExecutionTrace, TraceEvent
 
 logger = logging.getLogger("supyworkflow")
 
@@ -95,6 +96,7 @@ class SupyWorkflow:
         inputs: dict[str, Any] | None = None,
         from_cell: int = 0,
         snapshots: dict[int, dict] | None = None,
+        on_event: Callable[[TraceEvent], None] | None = None,
     ) -> RunResult:
         """Execute a workflow script.
 
@@ -103,12 +105,13 @@ class SupyWorkflow:
             inputs: Optional input variables to seed into the namespace.
             from_cell: Cell index to start from (for re-runs). Requires snapshots.
             snapshots: Previously captured cell snapshots (for resuming).
+            on_event: Optional callback fired for every trace event (real-time streaming).
 
         Returns:
             RunResult with final namespace, cell statuses, and execution trace.
         """
         run_id = uuid.uuid4().hex[:12]
-        trace = ExecutionTrace(run_id=run_id)
+        trace = ExecutionTrace(run_id=run_id, on_event=on_event)
         trace.start()
 
         # Parse
@@ -174,6 +177,9 @@ class SupyWorkflow:
             cell_source = cell.source
             success = False
 
+            # Set trace context so tool/llm calls inside exec() are attributed to this cell
+            set_trace(trace, cell.index)
+
             try:
                 compiled = compile(cell_source, f"<cell-{cell.index}-{cell.label}>", "exec")
                 exec(compiled, namespace)  # noqa: S102
@@ -193,10 +199,11 @@ class SupyWorkflow:
                     healed_cells[cell.index] = heal_result
 
                     if heal_result.healed:
-                        trace.error(
-                            cell.index,
-                            type(e).__name__,
-                            f"{e} (healed after {heal_result.attempts} attempts)",
+                        trace.heal(
+                            cell_index=cell.index,
+                            original_error=f"{type(e).__name__}: {e}",
+                            healed=True,
+                            attempts=heal_result.attempts,
                         )
                         # Try the patched version
                         try:
@@ -216,11 +223,16 @@ class SupyWorkflow:
                                 },
                             )
                         except Exception as heal_error:
-                            # Healed code also failed
                             cell.error = heal_error
                             last_error = heal_error
                             trace.error(cell.index, type(heal_error).__name__, str(heal_error))
                     else:
+                        trace.heal(
+                            cell_index=cell.index,
+                            original_error=f"{type(e).__name__}: {e}",
+                            healed=False,
+                            attempts=heal_result.attempts,
+                        )
                         cell.error = e
                         last_error = e
                         trace.error(cell.index, type(e).__name__, str(e))
@@ -228,6 +240,9 @@ class SupyWorkflow:
                     cell.error = e
                     last_error = e
                     trace.error(cell.index, type(e).__name__, str(e))
+            finally:
+                # Clear trace context
+                set_trace(None)
 
             if success:
                 cell.status = "completed"
