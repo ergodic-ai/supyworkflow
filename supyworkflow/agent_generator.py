@@ -128,8 +128,12 @@ summary = llm("Summarize these emails", data=emails, format=Summary)
 slack_send_message(channel="C069536PYEQ", text="\\n".join(summary.highlights))
 ```
 
-IMPORTANT: Use exact tool names and parameter names from get_tool_schemas(). \
-Use real IDs discovered via execute_tool(), not placeholders.
+IMPORTANT:
+- Use exact tool names and parameter names from get_tool_schemas().
+- Use real IDs discovered via execute_tool(), not placeholders.
+- Define Pydantic models BEFORE they are referenced. If model A has a field of type B, \
+define B first, then A. Never use forward references.
+- Keep models flat when possible — avoid deeply nested model hierarchies.
 """
 
 
