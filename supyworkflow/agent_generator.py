@@ -214,6 +214,7 @@ def generate_workflow_agentic(
     max_turns: int = MAX_TURNS,
     context: str | None = None,
     progress_file: str | None = None,
+    user_id: str | None = None,
 ) -> GenerateSession:
     """Generate a workflow script using an agentic exploration loop.
 
@@ -240,12 +241,14 @@ def generate_workflow_agentic(
     )
     start = time.monotonic()
 
-    # Fetch tool metadata
-    tools_metadata = _fetch_tools_metadata(api_key, base_url, 30)
+    # Fetch tool metadata (scoped to user if user_id provided)
+    tools_metadata = _fetch_tools_metadata(api_key, base_url, 30, user_id=user_id)
     tool_index = {t["function"]["name"]: t for t in tools_metadata}
 
-    # Build callables (for execute_tool)
-    tool_callables = build_tool_callables(api_key=api_key, base_url=base_url, tools_metadata=tools_metadata)
+    # Build callables (for execute_tool — scoped to user via X-Account-Id)
+    tool_callables = build_tool_callables(
+        api_key=api_key, base_url=base_url, tools_metadata=tools_metadata, user_id=user_id
+    )
 
     # Build tool listing for the system prompt
     tool_listing = _list_tools(tool_index)

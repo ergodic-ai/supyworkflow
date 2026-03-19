@@ -181,11 +181,16 @@ def _make_tool_callable(
     return call
 
 
-def _fetch_tools_metadata(api_key: str, base_url: str, timeout: float) -> list[dict]:
+def _fetch_tools_metadata(
+    api_key: str, base_url: str, timeout: float, user_id: str | None = None,
+) -> list[dict]:
     """Fetch tool metadata from the API."""
+    headers = {"Authorization": f"Bearer {api_key}"}
+    if user_id:
+        headers["X-Account-Id"] = user_id
     resp = httpx.get(
         f"{base_url.rstrip('/')}/api/v1/tools",
-        headers={"Authorization": f"Bearer {api_key}"},
+        headers=headers,
         timeout=timeout,
     )
     resp.raise_for_status()

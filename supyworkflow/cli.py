@@ -76,6 +76,7 @@ def run(
 @app.command()
 @click.option("--prompt", required=True, help="What the workflow should do")
 @click.option("--api-key", envvar="SUPYAGENT_API_KEY", required=True, help="Cardamon API key")
+@click.option("--user-id", default=None, help="User ID for X-Account-Id scoping")
 @click.option("--base-url", envvar="SUPYAGENT_BASE_URL", default="https://app.supyagent.com")
 @click.option("--context", default=None, help="Additional context for the generator")
 @click.option("--max-turns", default=20, help="Maximum agent exploration turns")
@@ -85,6 +86,7 @@ def run(
 def generate(
     prompt: str,
     api_key: str,
+    user_id: str | None,
     base_url: str,
     context: str | None,
     max_turns: int,
@@ -107,6 +109,7 @@ def generate(
         context=context,
         max_turns=max_turns,
         progress_file=progress_file,
+        user_id=user_id,
     )
 
     if output_format == "json":
