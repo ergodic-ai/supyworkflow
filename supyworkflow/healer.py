@@ -17,11 +17,11 @@ MAX_HEAL_ATTEMPTS = 3
 # Errors that are never recoverable — don't waste LLM calls
 UNRECOVERABLE_ERRORS = (
     ImportError,
-    SyntaxError,
     SystemExit,
     KeyboardInterrupt,
     MemoryError,
     RecursionError,
+    # Note: SyntaxError is NOT here — the healer can attempt to fix syntax issues
 )
 
 

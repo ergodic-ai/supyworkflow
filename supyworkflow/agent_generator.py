@@ -392,9 +392,26 @@ def _handle_tool_call(
             result = _execute_tool(tool_name, arguments, tool_callables, max_chars, offset)
 
         elif fn_name == "write_script":
-            script = fn_args.get("script", "")
-            session.script = _strip_fences(script)
-            result = "Script saved. Generation complete."
+            script = _strip_fences(fn_args.get("script", ""))
+
+            # Validate before accepting
+            from supyworkflow.validator import validate_script
+            validation = validate_script(script)
+
+            if validation.valid:
+                session.script = script
+                result = "Script saved. Generation complete."
+            else:
+                # Reject the script and tell the agent to fix it
+                result = (
+                    f"SCRIPT REJECTED — validation failed:\n"
+                    f"{validation.error}\n\n"
+                    f"Fix the issue and call write_script() again with the corrected script."
+                )
+                logger.info("script_rejected", extra={
+                    "error_type": validation.error_type,
+                    "error": validation.error,
+                })
 
         else:
             result = f"Unknown tool: {fn_name}"
