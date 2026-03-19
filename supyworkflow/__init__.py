@@ -18,4 +18,4 @@ __all__ = [
     "generate_workflow",
     "refine_workflow",
 ]
-__version__ = "0.1.0"
+__version__ = "0.1.1"
