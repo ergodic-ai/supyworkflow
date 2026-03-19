@@ -18,13 +18,16 @@ import logging
 import time
 import uuid
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import litellm
 from pydantic import BaseModel
 
 from supyworkflow.llm_builtin import DEFAULT_MODEL
 from supyworkflow.tool_proxy import _fetch_tools_metadata, build_tool_callables
+
+if TYPE_CHECKING:
+    from supyworkflow.tool_provider import ToolProvider
 
 logger = logging.getLogger("supyworkflow")
 
@@ -215,6 +218,7 @@ def generate_workflow_agentic(
     context: str | None = None,
     progress_file: str | None = None,
     user_id: str | None = None,
+    providers: list[ToolProvider] | None = None,
 ) -> GenerateSession:
     """Generate a workflow script using an agentic exploration loop.
 
@@ -228,6 +232,8 @@ def generate_workflow_agentic(
         model: LLM model identifier.
         max_turns: Maximum agent turns before forcing termination.
         context: Optional additional context (e.g., user preferences, prior session info).
+        providers: Optional list of ToolProviders. When set, tool discovery and
+                   execution go through these instead of direct supyagent calls.
 
     Returns:
         GenerateSession with the script, full message history, and metadata.
@@ -241,14 +247,21 @@ def generate_workflow_agentic(
     )
     start = time.monotonic()
 
-    # Fetch tool metadata (scoped to user if user_id provided)
-    tools_metadata = _fetch_tools_metadata(api_key, base_url, 30, user_id=user_id)
-    tool_index = {t["function"]["name"]: t for t in tools_metadata}
-
-    # Build callables (for execute_tool — scoped to user via X-Account-Id)
-    tool_callables = build_tool_callables(
-        api_key=api_key, base_url=base_url, tools_metadata=tools_metadata, user_id=user_id
-    )
+    # Build tool index and callables — either from providers or direct supyagent
+    if providers:
+        from supyworkflow.providers.composite import CompositeToolProvider
+        composite = CompositeToolProvider(providers)
+        tools_metadata = composite.discover()
+        tool_index = {t["function"]["name"]: t for t in tools_metadata}
+        # Build a callables dict that routes through the composite provider
+        tool_callables = {name: _make_provider_callable(name, composite) for name in tool_index}
+    else:
+        # Legacy path: direct supyagent calls
+        tools_metadata = _fetch_tools_metadata(api_key, base_url, 30, user_id=user_id)
+        tool_index = {t["function"]["name"]: t for t in tools_metadata}
+        tool_callables = build_tool_callables(
+            api_key=api_key, base_url=base_url, tools_metadata=tools_metadata, user_id=user_id
+        )
 
     # Build tool listing for the system prompt
     tool_listing = _list_tools(tool_index)
@@ -536,6 +549,16 @@ def _strip_fences(text: str) -> str:
     if match:
         return match.group(1).strip()
     return text
+
+
+def _make_provider_callable(name: str, provider: Any) -> callable:
+    """Create a callable that routes through a provider's execute() method."""
+
+    def call(**kwargs: Any) -> Any:
+        return provider.execute(name, **kwargs)
+
+    call.__name__ = name
+    return call
 
 
 def _write_progress(

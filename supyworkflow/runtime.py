@@ -6,14 +6,17 @@ import logging
 import time
 import uuid
 from dataclasses import dataclass, field
-from typing import Any, Callable
+from typing import TYPE_CHECKING, Any, Callable
 
 from supyworkflow._trace_ctx import set_trace
 from supyworkflow.healer import HealResult, heal_cell
-from supyworkflow.namespace import build_namespace, discover_tools
+from supyworkflow.namespace import build_namespace, build_namespace_from_providers, discover_tools
 from supyworkflow.parser import Cell, build_dependency_graph, parse_cells
 from supyworkflow.snapshot import capture_snapshot, restore_snapshot
 from supyworkflow.trace import ExecutionTrace, TraceEvent
+
+if TYPE_CHECKING:
+    from supyworkflow.tool_provider import ToolProvider
 
 logger = logging.getLogger("supyworkflow")
 
@@ -75,6 +78,8 @@ class SupyWorkflow:
         timeout_ms: int = 240_000,
         heal: bool = True,
         heal_model: str = "gemini/gemini-3.1-pro-preview",
+        providers: list[ToolProvider] | None = None,
+        extra_tools: dict[str, Any] | None = None,
     ):
         self.api_key = api_key
         self.user_id = user_id
@@ -82,12 +87,26 @@ class SupyWorkflow:
         self.timeout_ms = timeout_ms
         self.heal = heal
         self.heal_model = heal_model
+        self._providers = providers
+        self._extra_tools = extra_tools or {}
         self._tools: list[str] | None = None
+
+    @property
+    def _use_providers(self) -> bool:
+        """True when explicit providers were passed (new path)."""
+        return self._providers is not None
 
     @property
     def tools(self) -> list[str]:
         if self._tools is None:
-            self._tools = discover_tools(self.api_key, self.base_url)
+            if self._use_providers:
+                names: list[str] = []
+                for p in self._providers:  # type: ignore[union-attr]
+                    names.extend(p.get_tool_names())
+                names.extend(self._extra_tools.keys())
+                self._tools = list(dict.fromkeys(names))  # dedupe, preserve order
+            else:
+                self._tools = discover_tools(self.api_key, self.base_url)
         return self._tools
 
     def run(
@@ -97,6 +116,7 @@ class SupyWorkflow:
         from_cell: int = 0,
         snapshots: dict[int, dict] | None = None,
         on_event: Callable[[TraceEvent], None] | None = None,
+        extra_tools: dict[str, Any] | None = None,
     ) -> RunResult:
         """Execute a workflow script.
 
@@ -106,6 +126,8 @@ class SupyWorkflow:
             from_cell: Cell index to start from (for re-runs). Requires snapshots.
             snapshots: Previously captured cell snapshots (for resuming).
             on_event: Optional callback fired for every trace event (real-time streaming).
+            extra_tools: Additional callables to merge into the namespace at run time.
+                         These override init-time extra_tools on name collision.
 
         Returns:
             RunResult with final namespace, cell statuses, and execution trace.
@@ -121,14 +143,30 @@ class SupyWorkflow:
 
         dep_graph = build_dependency_graph(cells)
 
-        # Build namespace
-        namespace = build_namespace(
-            api_key=self.api_key,
-            user_id=self.user_id,
-            base_url=self.base_url,
-            tools=self.tools,
-            extra_globals=inputs,
-        )
+        # Merge extra_tools: init-time + run-time (run-time wins on collision)
+        merged_extra = {**self._extra_tools}
+        if extra_tools:
+            merged_extra.update(extra_tools)
+
+        # Build namespace — provider path or legacy path
+        if self._use_providers:
+            namespace = build_namespace_from_providers(
+                providers=self._providers,  # type: ignore[arg-type]
+                extra_tools=merged_extra or None,
+                extra_globals=inputs,
+            )
+        else:
+            namespace = build_namespace(
+                api_key=self.api_key,
+                user_id=self.user_id,
+                base_url=self.base_url,
+                tools=self.tools,
+                extra_globals=inputs,
+            )
+            # Merge extra_tools into legacy namespace too
+            if merged_extra:
+                namespace.update(merged_extra)
+
         tool_names = set(self.tools)
 
         # Restore snapshot if resuming from a specific cell

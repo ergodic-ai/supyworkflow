@@ -23,6 +23,9 @@ def app() -> None:
 @click.option("--from-cell", default=0, help="Cell index to start from")
 @click.option("--dry-run", is_flag=True, help="Analyze without executing")
 @click.option("--output-format", type=click.Choice(["text", "json"]), default="text")
+@click.option("--tools-gateway-url", envvar="SUPYWORKFLOW_TOOLS_GATEWAY_URL", default=None,
+              help="URL of a tools gateway. When set, ALL tool calls route through this gateway "
+                   "instead of directly to supyagent.")
 @click.option("--verbose", "-v", is_flag=True, help="Verbose logging")
 def run(
     script: str,
@@ -33,6 +36,7 @@ def run(
     from_cell: int,
     dry_run: bool,
     output_format: str,
+    tools_gateway_url: str | None,
     verbose: bool,
 ) -> None:
     """Execute a workflow script."""
@@ -55,7 +59,20 @@ def run(
         except json.JSONDecodeError:
             input_dict[key] = value
 
-    runtime = SupyWorkflow(api_key=api_key, user_id=user_id, base_url=base_url)
+    # Build providers if gateway URL is set
+    providers = None
+    if tools_gateway_url:
+        from supyworkflow.providers.http_gateway import HttpGatewayToolProvider
+        providers = [HttpGatewayToolProvider(
+            gateway_url=tools_gateway_url,
+            api_key=api_key,
+            user_id=user_id,
+        )]
+
+    runtime = SupyWorkflow(
+        api_key=api_key, user_id=user_id, base_url=base_url,
+        providers=providers,
+    )
 
     if dry_run:
         analysis = runtime.dry_run(source)
@@ -82,6 +99,9 @@ def run(
 @click.option("--max-turns", default=20, help="Maximum agent exploration turns")
 @click.option("--progress-file", default=None, help="File to write progress updates to (for polling)")
 @click.option("--output-format", type=click.Choice(["text", "json"]), default="text")
+@click.option("--tools-gateway-url", envvar="SUPYWORKFLOW_TOOLS_GATEWAY_URL", default=None,
+              help="URL of a tools gateway. When set, tool discovery and execution route "
+                   "through this gateway instead of directly to supyagent.")
 @click.option("--verbose", "-v", is_flag=True, help="Verbose logging")
 def generate(
     prompt: str,
@@ -92,6 +112,7 @@ def generate(
     max_turns: int,
     progress_file: str | None,
     output_format: str,
+    tools_gateway_url: str | None,
     verbose: bool,
 ) -> None:
     """Generate a workflow script from a natural language prompt (agentic)."""
@@ -102,6 +123,16 @@ def generate(
     if verbose:
         logging.basicConfig(level=logging.INFO, format="%(message)s")
 
+    # Build providers if gateway URL is set
+    providers = None
+    if tools_gateway_url:
+        from supyworkflow.providers.http_gateway import HttpGatewayToolProvider
+        providers = [HttpGatewayToolProvider(
+            gateway_url=tools_gateway_url,
+            api_key=api_key,
+            user_id=user_id,
+        )]
+
     session = generate_workflow_agentic(
         prompt=prompt,
         api_key=api_key,
@@ -110,6 +141,7 @@ def generate(
         max_turns=max_turns,
         progress_file=progress_file,
         user_id=user_id,
+        providers=providers,
     )
 
     if output_format == "json":

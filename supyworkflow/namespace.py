@@ -5,13 +5,17 @@ from __future__ import annotations
 import builtins as _builtins
 import json
 import logging
-from typing import Any
+import time
+from typing import TYPE_CHECKING, Any
 
 import httpx
 from pydantic import BaseModel, Field
 
 from supyworkflow.llm_builtin import llm
 from supyworkflow.tool_proxy import build_tool_callables
+
+if TYPE_CHECKING:
+    from supyworkflow.tool_provider import ToolProvider
 
 logger = logging.getLogger("supyworkflow")
 
@@ -235,3 +239,99 @@ def build_namespace(
     )
 
     return namespace
+
+
+def build_namespace_from_providers(
+    providers: list[ToolProvider],
+    extra_tools: dict[str, Any] | None = None,
+    extra_globals: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Build the execution namespace using pluggable tool providers.
+
+    Instead of calling build_tool_callables() directly against supyagent,
+    this builds callables from each provider's discover()/execute() methods.
+
+    Args:
+        providers: List of ToolProvider instances to source tools from.
+        extra_tools: Plain callables to merge into the namespace (no schema needed).
+        extra_globals: Additional global variables (e.g., input data).
+
+    Returns:
+        Execution namespace dict with __builtins__, tools, llm, and extras.
+    """
+    namespace: dict[str, Any] = {"__builtins__": SAFE_BUILTINS.copy()}
+
+    # Build callables from each provider
+    for provider in providers:
+        tools = provider.discover()
+        for tool in tools:
+            func = tool.get("function", {})
+            name = func.get("name", "")
+            if not name:
+                continue
+
+            # Create a closure that calls provider.execute() with tracing
+            namespace[name] = _make_provider_callable(name, provider)
+
+    # Merge extra tools (plain callables — override provider tools on collision)
+    if extra_tools:
+        namespace.update(extra_tools)
+
+    # Inject llm builtin
+    namespace["llm"] = llm
+
+    # Inject extras
+    if extra_globals:
+        namespace.update(extra_globals)
+
+    logger.info(
+        "namespace_built_from_providers",
+        extra={
+            "provider_count": len(providers),
+            "extra_tools": list(extra_tools.keys()) if extra_tools else [],
+            "extra_keys": list(extra_globals.keys()) if extra_globals else [],
+        },
+    )
+
+    return namespace
+
+
+def _make_provider_callable(name: str, provider: ToolProvider) -> Any:
+    """Create a callable that routes through provider.execute() with tracing."""
+
+    def call(**kwargs: Any) -> Any:
+        from supyworkflow._trace_ctx import get_cell_index, get_trace
+
+        start = time.monotonic()
+        input_keys = list(kwargs.keys())
+        logger.info("provider_tool_call_start", extra={"action": name, "input_keys": input_keys})
+
+        try:
+            result = provider.execute(name, **kwargs)
+        except Exception:
+            duration_ms = (time.monotonic() - start) * 1000
+            trace = get_trace()
+            if trace:
+                trace.tool_call(
+                    action=name, duration_ms=duration_ms, ok=False,
+                    cell_index=get_cell_index(),
+                    error="provider_error",
+                    input_keys=input_keys,
+                )
+            raise
+
+        duration_ms = (time.monotonic() - start) * 1000
+        logger.info("provider_tool_call_end", extra={"action": name, "duration_ms": duration_ms})
+
+        trace = get_trace()
+        if trace:
+            trace.tool_call(
+                action=name, duration_ms=duration_ms, ok=True,
+                cell_index=get_cell_index(), input_keys=input_keys,
+            )
+
+        return result
+
+    call.__name__ = name
+    call.__doc__ = f"Execute {name} via tool provider"
+    return call
