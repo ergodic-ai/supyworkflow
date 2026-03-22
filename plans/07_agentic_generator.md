@@ -93,6 +93,23 @@ A04 used 232k tokens for a 7-cell workflow. Most tokens come from large tool res
 - Implement context window management — drop old tool results once the agent has moved on
 - Could offer a `compact` mode that strips verbose tool results after each turn
 
+## Tool Call Record Fields
+
+Each entry in `session.tool_calls_made` now contains:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `tool` | string | Tool name (`get_tool_schemas`, `execute_tool`, `write_script`) |
+| `args` | dict | Arguments passed to the tool |
+| `timestamp` | float | Unix timestamp |
+| `status` | string | `"ok"` or `"error"` |
+| `result_length` | int | Length of the tool result string |
+| `reasoning` | string? | The LLM's reasoning text from the assistant message for this turn (max 500 chars). Only present on the first tool call of a turn, and only when the model produces `content` alongside tool calls. |
+| `result_preview` | string? | First 500 chars of the tool execution result. Not included for `write_script` calls. |
+| `error` | string? | Error message if `status` is `"error"` (max 200 chars) |
+
+The progress file (`--progress-file`) includes `reasoning` (truncated to 300 chars) in each `tool_calls` entry during the `"exploring"` phase, enabling real-time display of the agent's thought process in UIs.
+
 ## Remaining Work
 
 ### Merge to main

@@ -322,6 +322,9 @@ def generate_workflow_agentic(
                 continue
             break
 
+        # Capture the agent's reasoning (text before/alongside tool calls)
+        reasoning = (assistant_msg.content or "").strip()
+
         # Process tool calls
         for tc in assistant_msg.tool_calls:
             fn_name = tc.function.name
@@ -333,8 +336,11 @@ def generate_workflow_agentic(
             )
 
             result = _handle_tool_call(
-                fn_name, fn_args, tool_index, tool_callables, session
+                fn_name, fn_args, tool_index, tool_callables, session,
+                reasoning=reasoning,
             )
+            # Only attach reasoning to the first tool call of this turn
+            reasoning = ""
 
             # Add tool result to messages
             messages.append({
@@ -399,10 +405,13 @@ def _handle_tool_call(
     tool_index: dict[str, dict],
     tool_callables: dict[str, callable],
     session: GenerateSession,
+    reasoning: str = "",
 ) -> str:
     """Execute an agent tool call and return the result as a string."""
 
-    call_record = {"tool": fn_name, "args": fn_args, "timestamp": time.time()}
+    call_record: dict[str, Any] = {"tool": fn_name, "args": fn_args, "timestamp": time.time()}
+    if reasoning:
+        call_record["reasoning"] = reasoning[:500]
 
     try:
         if fn_name == "get_tool_schemas":
@@ -443,6 +452,9 @@ def _handle_tool_call(
 
         call_record["status"] = "ok"
         call_record["result_length"] = len(result)
+        # Store a truncated preview of the result (skip for write_script — it's just "Script saved")
+        if fn_name != "write_script":
+            call_record["result_preview"] = result[:500]
 
     except Exception as e:
         result = f"Error: {type(e).__name__}: {str(e)[:500]}"
@@ -591,11 +603,14 @@ def _write_progress(
         else:
             summary = json.dumps(args)[:60]
 
-        tool_calls_summary.append({
+        entry: dict[str, Any] = {
             "tool": tool,
             "summary": summary,
             "status": status,
-        })
+        }
+        if call.get("reasoning"):
+            entry["reasoning"] = call["reasoning"][:300]
+        tool_calls_summary.append(entry)
 
     progress = {
         "phase": phase,
