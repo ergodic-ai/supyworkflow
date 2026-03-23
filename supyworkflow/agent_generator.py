@@ -373,12 +373,12 @@ def generate_workflow_agentic(
 
             # Write progress and checkpoint state
             _write_progress(progress_file, session, "exploring")
-            _save_state(state_dir, effective_job_id, session, "exploring", tool_listing, context)
+            _save_state(state_dir, effective_job_id, session, "exploring", tool_listing, context, messages)
 
             # If write_script was called, we're done
             if session.script is not None:
                 _write_progress(progress_file, session, "complete")
-                _save_state(state_dir, effective_job_id, session, "complete", tool_listing, context)
+                _save_state(state_dir, effective_job_id, session, "complete", tool_listing, context, messages)
                 break
 
         if session.script is not None:
@@ -663,6 +663,7 @@ def _save_state(
     phase: str,
     tool_listing: str,
     context: str | None = None,
+    messages: list[dict] | None = None,
 ) -> None:
     """Persist full session state to disk for recovery/resume."""
     if not state_dir:
@@ -672,7 +673,7 @@ def _save_state(
         "job_id": job_id,
         "prompt": session.prompt,
         "context": context,
-        "messages": session.messages,
+        "messages": messages if messages is not None else session.messages,
         "tool_calls_made": session.tool_calls_made,
         "turns": session.turns,
         "total_tokens": session.total_tokens,
