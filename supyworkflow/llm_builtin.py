@@ -11,7 +11,15 @@ from pydantic import BaseModel
 
 logger = logging.getLogger("supyworkflow")
 
-DEFAULT_MODEL = "gemini/gemini-3.1-pro-preview"
+# Supported models for workflow generation.
+# The first entry is the default. Add new models here.
+SUPPORTED_MODELS = [
+    "gemini/gemini-3.1-pro-preview",
+    "openrouter/minimax/minimax-m2.5",
+    "openrouter/x-ai/grok-4.1-fast",
+]
+
+DEFAULT_MODEL = SUPPORTED_MODELS[0]
 
 
 def _is_pydantic_model(obj: Any) -> bool:
@@ -46,6 +54,7 @@ def llm(
         If format is a BaseModel subclass: validated Pydantic model instance.
     """
     import litellm
+    litellm.suppress_debug_info = True
 
     if model is None:
         model = DEFAULT_MODEL

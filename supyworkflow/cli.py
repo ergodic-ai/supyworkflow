@@ -104,6 +104,7 @@ def run(
                    "through this gateway instead of directly to supyagent.")
 @click.option("--job-id", default=None, help="External job ID (for state persistence). Auto-generated if omitted.")
 @click.option("--state-dir", default=None, help="Directory for full state checkpoints (enables resume on restart).")
+@click.option("--model", default=None, help="LiteLLM model identifier (e.g. 'gemini/gemini-3.1-pro-preview'). Uses default if omitted.")
 @click.option("--verbose", "-v", is_flag=True, help="Verbose logging")
 def generate(
     prompt: str,
@@ -117,6 +118,7 @@ def generate(
     tools_gateway_url: str | None,
     job_id: str | None,
     state_dir: str | None,
+    model: str | None,
     verbose: bool,
 ) -> None:
     """Generate a workflow script from a natural language prompt (agentic)."""
@@ -141,6 +143,7 @@ def generate(
         prompt=prompt,
         api_key=api_key,
         base_url=base_url,
+        model=model,
         context=context,
         max_turns=max_turns,
         progress_file=progress_file,

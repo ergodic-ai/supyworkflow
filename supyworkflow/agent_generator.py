@@ -22,6 +22,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 import litellm
+litellm.suppress_debug_info = True
 from pydantic import BaseModel
 
 from supyworkflow.llm_builtin import DEFAULT_MODEL
