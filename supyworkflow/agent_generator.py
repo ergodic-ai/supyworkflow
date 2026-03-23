@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -219,6 +220,8 @@ def generate_workflow_agentic(
     progress_file: str | None = None,
     user_id: str | None = None,
     providers: list[ToolProvider] | None = None,
+    job_id: str | None = None,
+    state_dir: str | None = None,
 ) -> GenerateSession:
     """Generate a workflow script using an agentic exploration loop.
 
@@ -234,6 +237,8 @@ def generate_workflow_agentic(
         context: Optional additional context (e.g., user preferences, prior session info).
         providers: Optional list of ToolProviders. When set, tool discovery and
                    execution go through these instead of direct supyagent calls.
+        job_id: External ID for this job (used for state persistence). Auto-generated if omitted.
+        state_dir: Directory for full state checkpoints. No persistence if omitted.
 
     Returns:
         GenerateSession with the script, full message history, and metadata.
@@ -241,11 +246,14 @@ def generate_workflow_agentic(
     if model is None:
         model = DEFAULT_MODEL
 
+    effective_job_id = job_id or uuid.uuid4().hex[:12]
+
     session = GenerateSession(
-        session_id=uuid.uuid4().hex[:12],
+        session_id=effective_job_id,
         prompt=prompt,
     )
     start = time.monotonic()
+    start_turn = 0
 
     # Build tool index and callables — either from providers or direct supyagent
     if providers:
@@ -266,18 +274,31 @@ def generate_workflow_agentic(
     # Build tool listing for the system prompt
     tool_listing = _list_tools(tool_index)
 
-    # Build initial messages with tools seeded in
-    system_prompt = SYSTEM_PROMPT_TEMPLATE.format(tool_listing=tool_listing)
-    messages = [{"role": "system", "content": system_prompt}]
+    # Try to resume from saved state
+    saved = _load_state(state_dir, effective_job_id)
+    if saved and saved.get("messages") and saved.get("phase") != "complete":
+        # Restore session from checkpoint
+        messages = saved["messages"]
+        session.tool_calls_made = saved.get("tool_calls_made", [])
+        session.turns = saved.get("turns", 0)
+        session.total_tokens = saved.get("total_tokens", 0)
+        start_turn = session.turns
+        logger.info("Resuming from turn %d", start_turn, extra={
+            "job_id": effective_job_id, "restored_tool_calls": len(session.tool_calls_made),
+        })
+    else:
+        # Build initial messages with tools seeded in
+        system_prompt = SYSTEM_PROMPT_TEMPLATE.format(tool_listing=tool_listing)
+        messages = [{"role": "system", "content": system_prompt}]
 
-    user_content = f"## Task\n{prompt}"
-    if context:
-        user_content += f"\n\n## Additional Context\n{context}"
+        user_content = f"## Task\n{prompt}"
+        if context:
+            user_content += f"\n\n## Additional Context\n{context}"
 
-    messages.append({"role": "user", "content": user_content})
+        messages.append({"role": "user", "content": user_content})
 
     # Agent loop
-    for turn in range(max_turns):
+    for turn in range(start_turn, max_turns):
         session.turns = turn + 1
 
         logger.info("agent_turn", extra={"turn": turn + 1, "session": session.session_id})
@@ -349,12 +370,14 @@ def generate_workflow_agentic(
                 "content": result,
             })
 
-            # Write progress
+            # Write progress and checkpoint state
             _write_progress(progress_file, session, "exploring")
+            _save_state(state_dir, effective_job_id, session, "exploring", tool_listing, context)
 
             # If write_script was called, we're done
             if session.script is not None:
                 _write_progress(progress_file, session, "complete")
+                _save_state(state_dir, effective_job_id, session, "complete", tool_listing, context)
                 break
 
         if session.script is not None:
@@ -630,3 +653,66 @@ def _write_progress(
             json.dump(progress, f, default=str)
     except Exception:
         pass  # Non-critical — don't crash generation over progress writes
+
+
+def _save_state(
+    state_dir: str | None,
+    job_id: str,
+    session: GenerateSession,
+    phase: str,
+    tool_listing: str,
+    context: str | None = None,
+) -> None:
+    """Persist full session state to disk for recovery/resume."""
+    if not state_dir:
+        return
+
+    state = {
+        "job_id": job_id,
+        "prompt": session.prompt,
+        "context": context,
+        "messages": session.messages,
+        "tool_calls_made": session.tool_calls_made,
+        "turns": session.turns,
+        "total_tokens": session.total_tokens,
+        "script": session.script,
+        "phase": phase,
+        "tool_listing": tool_listing,
+        "timestamp": time.time(),
+    }
+
+    os.makedirs(state_dir, exist_ok=True)
+    state_path = os.path.join(state_dir, f"{job_id}.json")
+    tmp_path = state_path + ".tmp"
+
+    try:
+        with open(tmp_path, "w") as f:
+            json.dump(state, f, default=str)
+        os.replace(tmp_path, state_path)  # Atomic on POSIX
+    except Exception:
+        logger.warning("Failed to save state", extra={"job_id": job_id})
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+
+
+def _load_state(state_dir: str | None, job_id: str) -> dict | None:
+    """Load a previously saved session state, or return None."""
+    if not state_dir:
+        return None
+
+    state_path = os.path.join(state_dir, f"{job_id}.json")
+    try:
+        with open(state_path) as f:
+            state = json.load(f)
+        if state.get("job_id") != job_id:
+            return None
+        logger.info("Loaded saved state", extra={
+            "job_id": job_id,
+            "turns": state.get("turns", 0),
+            "phase": state.get("phase"),
+        })
+        return state
+    except (FileNotFoundError, json.JSONDecodeError, KeyError):
+        return None

@@ -102,6 +102,8 @@ def run(
 @click.option("--tools-gateway-url", envvar="SUPYWORKFLOW_TOOLS_GATEWAY_URL", default=None,
               help="URL of a tools gateway. When set, tool discovery and execution route "
                    "through this gateway instead of directly to supyagent.")
+@click.option("--job-id", default=None, help="External job ID (for state persistence). Auto-generated if omitted.")
+@click.option("--state-dir", default=None, help="Directory for full state checkpoints (enables resume on restart).")
 @click.option("--verbose", "-v", is_flag=True, help="Verbose logging")
 def generate(
     prompt: str,
@@ -113,6 +115,8 @@ def generate(
     progress_file: str | None,
     output_format: str,
     tools_gateway_url: str | None,
+    job_id: str | None,
+    state_dir: str | None,
     verbose: bool,
 ) -> None:
     """Generate a workflow script from a natural language prompt (agentic)."""
@@ -142,6 +146,8 @@ def generate(
         progress_file=progress_file,
         user_id=user_id,
         providers=providers,
+        job_id=job_id,
+        state_dir=state_dir,
     )
 
     if output_format == "json":
