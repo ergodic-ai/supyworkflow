@@ -9,6 +9,7 @@ from typing import Any, Callable
 # Cost per 1M tokens (prompt, completion)
 MODEL_PRICING: dict[str, dict[str, float]] = {
     "gemini/gemini-3.1-pro-preview": {"prompt": 1.25, "completion": 5.00},
+    "gemini/gemini-3-flash-preview": {"prompt": 0.50, "completion": 2.00},
     "gemini/gemini-2.0-flash": {"prompt": 0.10, "completion": 0.40},
     "gpt-4o": {"prompt": 2.50, "completion": 10.00},
     "gpt-4o-mini": {"prompt": 0.15, "completion": 0.60},
@@ -76,21 +77,25 @@ class ExecutionTrace:
             self.on_event(event)
 
     def cell_start(self, index: int, label: str) -> None:
-        self._emit(TraceEvent(
-            timestamp=self._elapsed(),
-            event_type="cell_start",
-            cell_index=index,
-            cell_label=label,
-        ))
+        self._emit(
+            TraceEvent(
+                timestamp=self._elapsed(),
+                event_type="cell_start",
+                cell_index=index,
+                cell_label=label,
+            )
+        )
 
     def cell_end(self, index: int, label: str, status: str, duration_ms: float) -> None:
-        self._emit(TraceEvent(
-            timestamp=self._elapsed(),
-            event_type="cell_end",
-            cell_index=index,
-            cell_label=label,
-            data={"status": status, "duration_ms": round(duration_ms, 1)},
-        ))
+        self._emit(
+            TraceEvent(
+                timestamp=self._elapsed(),
+                event_type="cell_end",
+                cell_index=index,
+                cell_label=label,
+                data={"status": status, "duration_ms": round(duration_ms, 1)},
+            )
+        )
 
     def tool_call(
         self,
@@ -110,12 +115,14 @@ class ExecutionTrace:
             data["error"] = error
         if input_keys:
             data["input_keys"] = input_keys
-        self._emit(TraceEvent(
-            timestamp=self._elapsed(),
-            event_type="tool_call",
-            cell_index=cell_index,
-            data=data,
-        ))
+        self._emit(
+            TraceEvent(
+                timestamp=self._elapsed(),
+                event_type="tool_call",
+                cell_index=cell_index,
+                data=data,
+            )
+        )
 
     def llm_call(
         self,
@@ -127,19 +134,21 @@ class ExecutionTrace:
         has_format: bool = False,
     ) -> None:
         cost = _estimate_cost(model, prompt_tokens, completion_tokens)
-        self._emit(TraceEvent(
-            timestamp=self._elapsed(),
-            event_type="llm_call",
-            cell_index=cell_index,
-            data={
-                "model": model,
-                "duration_ms": round(duration_ms, 1),
-                "prompt_tokens": prompt_tokens,
-                "completion_tokens": completion_tokens,
-                "cost": round(cost, 6),
-                "has_format": has_format,
-            },
-        ))
+        self._emit(
+            TraceEvent(
+                timestamp=self._elapsed(),
+                event_type="llm_call",
+                cell_index=cell_index,
+                data={
+                    "model": model,
+                    "duration_ms": round(duration_ms, 1),
+                    "prompt_tokens": prompt_tokens,
+                    "completion_tokens": completion_tokens,
+                    "cost": round(cost, 6),
+                    "has_format": has_format,
+                },
+            )
+        )
 
     def heal(
         self,
@@ -148,24 +157,28 @@ class ExecutionTrace:
         healed: bool,
         attempts: int,
     ) -> None:
-        self._emit(TraceEvent(
-            timestamp=self._elapsed(),
-            event_type="heal",
-            cell_index=cell_index,
-            data={
-                "original_error": original_error,
-                "healed": healed,
-                "attempts": attempts,
-            },
-        ))
+        self._emit(
+            TraceEvent(
+                timestamp=self._elapsed(),
+                event_type="heal",
+                cell_index=cell_index,
+                data={
+                    "original_error": original_error,
+                    "healed": healed,
+                    "attempts": attempts,
+                },
+            )
+        )
 
     def error(self, cell_index: int, error_type: str, message: str) -> None:
-        self._emit(TraceEvent(
-            timestamp=self._elapsed(),
-            event_type="error",
-            cell_index=cell_index,
-            data={"error_type": error_type, "message": message[:500]},
-        ))
+        self._emit(
+            TraceEvent(
+                timestamp=self._elapsed(),
+                event_type="error",
+                cell_index=cell_index,
+                data={"error_type": error_type, "message": message[:500]},
+            )
+        )
 
     def summary(self) -> dict:
         """Generate a summary of the run with cost tracking."""

@@ -10,7 +10,11 @@ from typing import TYPE_CHECKING, Any, Callable
 
 from supyworkflow._trace_ctx import set_trace
 from supyworkflow.healer import HealResult, heal_cell
-from supyworkflow.namespace import build_namespace, build_namespace_from_providers, discover_tools
+from supyworkflow.namespace import (
+    build_namespace,
+    build_namespace_from_providers,
+    discover_tools,
+)
 from supyworkflow.parser import Cell, build_dependency_graph, parse_cells
 from supyworkflow.snapshot import capture_snapshot, restore_snapshot
 from supyworkflow.trace import ExecutionTrace, TraceEvent
@@ -77,7 +81,7 @@ class SupyWorkflow:
         base_url: str = "https://app.supyagent.com",
         timeout_ms: int = 240_000,
         heal: bool = True,
-        heal_model: str = "gemini/gemini-3.1-pro-preview",
+        heal_model: str = "gemini/gemini-3-flash-preview",
         providers: list[ToolProvider] | None = None,
         extra_tools: dict[str, Any] | None = None,
     ):
@@ -219,7 +223,9 @@ class SupyWorkflow:
             set_trace(trace, cell.index)
 
             try:
-                compiled = compile(cell_source, f"<cell-{cell.index}-{cell.label}>", "exec")
+                compiled = compile(
+                    cell_source, f"<cell-{cell.index}-{cell.label}>", "exec"
+                )
                 exec(compiled, namespace)  # noqa: S102
                 success = True
             except Exception as e:
@@ -263,7 +269,9 @@ class SupyWorkflow:
                         except Exception as heal_error:
                             cell.error = heal_error
                             last_error = heal_error
-                            trace.error(cell.index, type(heal_error).__name__, str(heal_error))
+                            trace.error(
+                                cell.index, type(heal_error).__name__, str(heal_error)
+                            )
                     else:
                         trace.heal(
                             cell_index=cell.index,
@@ -341,7 +349,9 @@ class SupyWorkflow:
 
         warnings = []
         for cell in cells:
-            unresolved = cell.depends_on - all_writes - connected - {"llm", "BaseModel", "Field"}
+            unresolved = (
+                cell.depends_on - all_writes - connected - {"llm", "BaseModel", "Field"}
+            )
             if unresolved:
                 warnings.append(
                     f"Cell {cell.index} ({cell.label}): unresolved references: {unresolved}"

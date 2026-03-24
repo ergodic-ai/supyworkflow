@@ -59,7 +59,9 @@ def heal_cell(
     # Don't try to heal unrecoverable errors
     if isinstance(error, UNRECOVERABLE_ERRORS):
         logger.info("heal_skip", extra={"reason": type(error).__name__})
-        return HealResult(healed=False, patched_source=cell_source, attempts=0, patches=[])
+        return HealResult(
+            healed=False, patched_source=cell_source, attempts=0, patches=[]
+        )
 
     # Build context about available variables
     available_vars = _summarize_namespace(namespace_snapshot)
@@ -111,7 +113,12 @@ def heal_cell(
         # LLM returned the same code or couldn't extract — try again with more context
         patches.append(raw)
 
-    return HealResult(healed=False, patched_source=cell_source, attempts=MAX_HEAL_ATTEMPTS, patches=patches)
+    return HealResult(
+        healed=False,
+        patched_source=cell_source,
+        attempts=MAX_HEAL_ATTEMPTS,
+        patches=patches,
+    )
 
 
 HEALER_SYSTEM_PROMPT = """\
@@ -185,7 +192,7 @@ def _extract_code(llm_response: str) -> str | None:
     # Look for ```python ... ``` blocks
     import re
 
-    pattern = r'```(?:python)?\s*\n(.*?)```'
+    pattern = r"```(?:python)?\s*\n(.*?)```"
     matches = re.findall(pattern, llm_response, re.DOTALL)
 
     if matches:

@@ -14,6 +14,7 @@ logger = logging.getLogger("supyworkflow")
 # Supported models for workflow generation.
 # The first entry is the default. Add new models here.
 SUPPORTED_MODELS = [
+    "gemini/gemini-3-flash-preview",
     "gemini/gemini-3.1-pro-preview",
     "openrouter/minimax/minimax-m2.5",
     "openrouter/x-ai/grok-4.1-fast",
@@ -54,6 +55,7 @@ def llm(
         If format is a BaseModel subclass: validated Pydantic model instance.
     """
     import litellm
+
     litellm.suppress_debug_info = True
 
     if model is None:
@@ -121,6 +123,7 @@ def llm(
 
     # Write to trace if in a traced execution
     from supyworkflow._trace_ctx import get_cell_index, get_trace
+
     trace = get_trace()
     if trace:
         trace.llm_call(
@@ -142,7 +145,8 @@ def llm(
     cleaned = raw.strip()
     if cleaned.startswith("```"):
         import re
-        match = re.search(r'```(?:json)?\s*\n(.*?)```', cleaned, re.DOTALL)
+
+        match = re.search(r"```(?:json)?\s*\n(.*?)```", cleaned, re.DOTALL)
         if match:
             cleaned = match.group(1).strip()
 
